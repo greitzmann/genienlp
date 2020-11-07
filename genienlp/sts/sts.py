@@ -53,15 +53,33 @@ from sentence_transformers import SentenceTransformer, LoggingHandler, models, e
 ##############################
 ##############################
 
-model = SentenceTransformer("distiluse-base-multilingual-cased-v2")
 
-src_sentences = ['I am here', 'I am here', 'I am here']
-trg_sentences1 = ['I am not there', 'He is here', 'I am there']
+from sklearn.metrics.pairwise import paired_cosine_distances
 
+# model = SentenceTransformer("xlm-r-distilroberta-base-paraphrase-v1")
+# model = SentenceTransformer("distiluse-base-multilingual-cased-v2")
+# model = SentenceTransformer("xlm-r-bert-base-nli-stsb-mean-tokens")
+# model = SentenceTransformer("distilbert-multilingual-nli-stsb-quora-ranking")
+model = SentenceTransformer("LaBSE")
 
+src_sentences = ['I am here', 'I am here', 'I am here', 'I am here']
+trg_sentences = ['I am not there', 'He is here', 'I am there', 'I am here']
+labse_trg_sentences = ['Non sono li', 'Lui è qui', 'Ci sono', 'Sono qui']
+labels = [1, 0.5, 0, 1]
 
-dev_mse = evaluation.EmbeddingSimilarityEvaluator(src_sentences, tgt_sent, name='dev', scores=)
+batch_size = 4
 
-score1 = -1.0 * dev_mse(model, output_path='./')
+embeddings1 = model.encode(src_sentences, batch_size=batch_size, show_progress_bar=True,
+                           convert_to_numpy=True)
+embeddings2 = model.encode(labse_trg_sentences, batch_size=batch_size, show_progress_bar=True,
+                           convert_to_numpy=True)
 
-print('dev_mse', score1)
+cosine_scores = 1 - (paired_cosine_distances(embeddings1, embeddings2))
+
+print('cosine_scores', cosine_scores)
+
+# dev_mse = evaluation.EmbeddingSimilarityEvaluator(src_sentences, trg_sentences1, scores=)
+
+# score1 = -1.0 * dev_mse(model, output_path='./')
+
+# print('dev_mse', score1)
