@@ -1,4 +1,13 @@
 from sentence_transformers import SentenceTransformer, LoggingHandler, models, evaluation, losses
+import argparse
+
+
+parser = argparse.ArgumentParser()
+
+parser.add_argument('--input_file', type=str)
+
+args = parser.parse_args()
+
 #
 #
 # model = SentenceTransformer("distiluse-base-multilingual-cased-v2")
@@ -56,6 +65,8 @@ from sentence_transformers import SentenceTransformer, LoggingHandler, models, e
 
 from sklearn.metrics.pairwise import paired_cosine_distances
 
+
+
 # model = SentenceTransformer("xlm-r-distilroberta-base-paraphrase-v1")
 # model = SentenceTransformer("distiluse-base-multilingual-cased-v2")
 # model = SentenceTransformer("xlm-r-bert-base-nli-stsb-mean-tokens")
@@ -66,6 +77,13 @@ src_sentences = ['I am here', 'I am here', 'I am here', 'I am here']
 trg_sentences = ['I am not there', 'He is here', 'I am there', 'I am here']
 labse_trg_sentences = ['Non sono li', 'Lui è qui', 'Ci sono', 'Sono qui']
 labels = [1, 0.5, 0, 1]
+
+with open(args.input_file, 'r') as fin:
+    for line in fin:
+        row = list(map(lambda part: part.strip(), line.split('\t')))
+        src_sentences.append(row[0])
+        trg_sentences.append(row[1])
+
 
 batch_size = 4
 
