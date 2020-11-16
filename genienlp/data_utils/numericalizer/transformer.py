@@ -451,7 +451,7 @@ class BartNumericalizer(TransformerNumericalizer):
             else:
                 batch_tokens.append(' '.join(tokens))
         
-        encoded_batch = self._tokenizer.batch_encode_plus(batch_tokens, add_special_tokens=True, pad_to_max_length=True, return_attention_masks=True)
+        encoded_batch = self._tokenizer.batch_encode_plus(batch_tokens, add_special_tokens=True, padding='longest', return_attention_mask=True)
         length = torch.sum(torch.tensor(encoded_batch['attention_mask'], dtype=torch.int32, device=device), dim=1)
         numerical = torch.tensor(encoded_batch['input_ids'], dtype=torch.int64, device=device)
 
