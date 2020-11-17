@@ -28,6 +28,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import collections
 import os
+from typing import Iterable
 import torch
 
 from .decoder_vocab import DecoderVocabulary
@@ -72,7 +73,8 @@ class TransformerNumericalizer(object):
     def grow_vocab(self, examples):
         # do a pass over all the data in the dataset and tokenize everything
         # this will add any new tokens that are not to be converted into word-pieces
-        if not isinstance(examples, list):
+        if not isinstance(examples, Iterable):
+            print(examples)
             # single example
             examples = [examples]
         for example in examples:
