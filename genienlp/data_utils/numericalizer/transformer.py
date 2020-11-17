@@ -72,6 +72,9 @@ class TransformerNumericalizer(object):
     def grow_vocab(self, examples):
         # do a pass over all the data in the dataset and tokenize everything
         # this will add any new tokens that are not to be converted into word-pieces
+        if not isinstance(examples, list):
+            # single example
+            examples = [examples]
         for example in examples:
             self._tokenizer.tokenize(example.context, example.context_word_mask)
             self._tokenizer.tokenize(example.question, example.question_word_mask)
