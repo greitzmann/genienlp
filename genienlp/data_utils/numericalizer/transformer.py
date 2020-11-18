@@ -26,9 +26,9 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 import collections
 import os
-from typing import Iterable
 import torch
 
 from .decoder_vocab import DecoderVocabulary
@@ -73,10 +73,6 @@ class TransformerNumericalizer(object):
     def grow_vocab(self, examples):
         # do a pass over all the data in the dataset and tokenize everything
         # this will add any new tokens that are not to be converted into word-pieces
-        if not isinstance(examples, Iterable):
-            print(examples)
-            # single example
-            examples = [examples]
         for example in examples:
             self._tokenizer.tokenize(example.context, example.context_word_mask)
             self._tokenizer.tokenize(example.question, example.question_word_mask)
