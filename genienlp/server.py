@@ -85,22 +85,38 @@ class Server:
             task = list(get_tasks([task_name], self.args).values())[0]
             self._cached_tasks[task_name] = task
 
-        context = request['context']
-        if not context:
-            context = task.default_context
-        question = request['question']
-        if not question:
-            question = task.default_question
-        answer = ''
+        batch = []
+        if 'instances' in request:
+            # request['instances'] is an array of {context, question, answer, example_id}
+            for instance in request['instances']:
+                example_id, context, question, answer = instance['example_id'], instance['context'], instance['question'], ''
+                if not context:
+                    context = task.default_context
+                if not question:
+                    question = task.default_question
 
-        ex = Example.from_raw(str(request['id']), context, question, answer, tokenize=task.tokenize,
-                              lower=self.args.lower)
+                ex = Example.from_raw(str(example_id), context, question, answer, tokenize=task.tokenize, lower=self.args.lower)
+                batch.append(self.numericalize_example(ex))
+            predictions = generate_with_model(self.model, batch, self.numericalizer, task, self.args, prediction_file_name=None, output_predictions_only=True)
 
-        batch = self.numericalize_example(ex)
-        predictions = generate_with_model(self.model, [batch], self.numericalizer, task, self.args, prediction_file_name=None, output_predictions_only=True)
+            response = json.dumps(dict(id=request['id'], instances=dict(answer=[p[0] for p in predictions])))
+            return response + '\n'
+        else:
+            context = request['context']
+            if not context:
+                context = task.default_context
+            question = request['question']
+            if not question:
+                question = task.default_question
+            answer = ''
 
-        response = json.dumps(dict(id=request['id'], answer=predictions[0][0]))
-        return response + '\n'
+            ex = Example.from_raw(str(request['id']), context, question, answer, tokenize=task.tokenize, lower=self.args.lower)
+
+            batch = self.numericalize_example(ex)
+            predictions = generate_with_model(self.model, [batch], self.numericalizer, task, self.args, prediction_file_name=None, output_predictions_only=True)
+
+            response = json.dumps(dict(id=request['id'], answer=predictions[0][0]))
+            return response + '\n'
 
     async def handle_client(self, client_reader, client_writer):
         try:
