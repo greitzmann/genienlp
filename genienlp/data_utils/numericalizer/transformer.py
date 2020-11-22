@@ -32,441 +32,493 @@ import torch
 
 from .decoder_vocab import DecoderVocabulary
 from .masked_tokenizer import MaskedBertTokenizer, MaskedXLMRobertaTokenizer
-from transformers import BartTokenizer
+from transformers import BartTokenizer, T5Tokenizer
 from .sequential_field import SequentialField
 from transformers.file_utils import SPIECE_UNDERLINE
 
 class TransformerNumericalizer(object):
-    """
-    Numericalizer that uses Tokenizers from huggingface's transformers library.
-    """
+	"""
+	Numericalizer that uses Tokenizers from huggingface's transformers library.
+	"""
 
-    def __init__(self, pretrained_tokenizer, config, max_generative_vocab, cache=None, fix_length=None):
-        self.config = config
-        self._pretrained_name = pretrained_tokenizer
-        self.max_generative_vocab = max_generative_vocab
-        self._cache = cache
-        self._tokenizer = None
-        self.fix_length = fix_length
+	def __init__(self, pretrained_tokenizer, config, max_generative_vocab, cache=None, fix_length=None):
+		self.config = config
+		self._pretrained_name = pretrained_tokenizer
+		self.max_generative_vocab = max_generative_vocab
+		self._cache = cache
+		self._tokenizer = None
+		self.fix_length = fix_length
 
-    @property
-    def vocab(self):
-        return self._tokenizer
+	@property
+	def vocab(self):
+		return self._tokenizer
 
-    @property
-    def num_tokens(self):
-        return len(self._tokenizer)
+	@property
+	def num_tokens(self):
+		return len(self._tokenizer)
 
-    def load(self, save_dir):
-        raise NotImplementedError()
+	def load(self, save_dir):
+		raise NotImplementedError()
 
-    def save(self, save_dir):
-        self._tokenizer.save_pretrained(save_dir)
-        with open(os.path.join(save_dir, 'decoder-vocab.txt'), 'w') as fp:
-            for word in self._decoder_words:
-                fp.write(word + '\n')
+	def save(self, save_dir):
+		self._tokenizer.save_pretrained(save_dir)
+		with open(os.path.join(save_dir, 'decoder-vocab.txt'), 'w') as fp:
+			for word in self._decoder_words:
+				fp.write(word + '\n')
 
-    def build_vocab(self, vocab_fields, vocab_sets):
-        raise NotImplementedError()
+	def build_vocab(self, vocab_fields, vocab_sets):
+		raise NotImplementedError()
 
-    def grow_vocab(self, examples):
-        # do a pass over all the data in the dataset and tokenize everything
-        # this will add any new tokens that are not to be converted into word-pieces
-        for example in examples:
-            self._tokenizer.tokenize(example.context, example.context_word_mask)
-            self._tokenizer.tokenize(example.question, example.question_word_mask)
+	def grow_vocab(self, examples):
+		# do a pass over all the data in the dataset and tokenize everything
+		# this will add any new tokens that are not to be converted into word-pieces
+		for example in examples:
+			self._tokenizer.tokenize(example.context, example.context_word_mask)
+			self._tokenizer.tokenize(example.question, example.question_word_mask)
 
-        # return no new words - BertEmbedding will resize the embedding regardless
-        return []
+		# return no new words - BertEmbedding will resize the embedding regardless
+		return []
 
-    def get_special_token_mask(self, token_ids):
-        special_tokens_tuple = (self.init_id, self.eos_id, self.pad_id, self.mask_id)
-        return list(map(lambda x: 1 if x in special_tokens_tuple else 0, token_ids))
+	def get_special_token_mask(self, token_ids):
+		special_tokens_tuple = (self.init_id, self.eos_id, self.pad_id, self.mask_id)
+		return list(map(lambda x: 1 if x in special_tokens_tuple else 0, token_ids))
 
-    def _init(self):
-        self.pad_first = self._tokenizer.padding_side == 'left'
+	def _init(self):
+		self.pad_first = self._tokenizer.padding_side == 'left'
 
-        self.init_token = self._tokenizer.bos_token
-        self.eos_token = self._tokenizer.eos_token
-        self.unk_token = self._tokenizer.unk_token
-        self.pad_token = self._tokenizer.pad_token
-        self.mask_token = self._tokenizer.mask_token
-        self.cls_token = self._tokenizer.cls_token
-        self.sep_token = self._tokenizer.sep_token
+		self.init_token = self._tokenizer.bos_token
+		self.eos_token = self._tokenizer.eos_token
+		self.unk_token = self._tokenizer.unk_token
+		self.pad_token = self._tokenizer.pad_token
+		self.mask_token = self._tokenizer.mask_token
+		self.cls_token = self._tokenizer.cls_token
+		self.sep_token = self._tokenizer.sep_token
 
-        self.init_id = self._tokenizer.bos_token_id
-        self.eos_id = self._tokenizer.eos_token_id
-        self.unk_id = self._tokenizer.unk_token_id
-        self.pad_id = self._tokenizer.pad_token_id
-        self.mask_id = self._tokenizer.mask_token_id
-        self.cls_id = self._tokenizer.cls_token_id
-        self.sep_id = self._tokenizer.sep_token_id
-        self.generative_vocab_size = len(self._decoder_words)
+		self.init_id = self._tokenizer.bos_token_id
+		self.eos_id = self._tokenizer.eos_token_id
+		self.unk_id = self._tokenizer.unk_token_id
+		self.pad_id = self._tokenizer.pad_token_id
+		self.mask_id = self._tokenizer.mask_token_id
+		self.cls_id = self._tokenizer.cls_token_id
+		self.sep_id = self._tokenizer.sep_token_id
+		self.generative_vocab_size = len(self._decoder_words)
 
-        self.decoder_vocab = DecoderVocabulary(self._decoder_words, self._tokenizer,
-                                               pad_token=self.pad_token, eos_token=self.eos_token)
+		self.decoder_vocab = DecoderVocabulary(self._decoder_words, self._tokenizer,
+											   pad_token=self.pad_token, eos_token=self.eos_token)
 
-    def encode_single(self, minibatch, decoder_vocab, device=None, max_length=-1):
-        assert isinstance(minibatch, list)
+	def encode_single(self, minibatch, decoder_vocab, device=None, max_length=-1):
+		assert isinstance(minibatch, list)
 
-        # apply word-piece tokenization to everything first
-        wp_tokenized = []
-        for tokens, mask in minibatch:
-            wp_tokenized.append(self._tokenizer.tokenize(tokens, mask))
+		# apply word-piece tokenization to everything first
+		wp_tokenized = []
+		for tokens, mask in minibatch:
+			wp_tokenized.append(self._tokenizer.tokenize(tokens, mask))
 
-        if max_length > -1:
-            max_len = max_length
-        elif self.fix_length is None:
-            max_len = max(len(x) for x in wp_tokenized)
-        else:
-            max_len = self.fix_length
+		if max_length > -1:
+			max_len = max_length
+		elif self.fix_length is None:
+			max_len = max(len(x) for x in wp_tokenized)
+		else:
+			max_len = self.fix_length
 
-        padded = []
-        lengths = []
-        numerical = []
-        decoder_numerical = []
-        for wp_tokens in wp_tokenized:
-            if self.pad_first:
-                padded_example = [self.pad_token] * max(0, max_len - len(wp_tokens)) + \
-                                 [self.init_token] + \
-                                 list(wp_tokens[:max_len]) + \
-                                 [self.eos_token]
-            else:
-                padded_example = [self.init_token] + \
-                                 list(wp_tokens[:max_len]) + \
-                                 [self.eos_token] + \
-                                 [self.pad_token] * max(0, max_len - len(wp_tokens))
+		padded = []
+		lengths = []
+		numerical = []
+		decoder_numerical = []
+		for wp_tokens in wp_tokenized:
+			if self.pad_first:
+				padded_example = [self.pad_token] * max(0, max_len - len(wp_tokens)) + \
+								 [self.init_token] + \
+								 list(wp_tokens[:max_len]) + \
+								 [self.eos_token]
+			else:
+				padded_example = [self.init_token] + \
+								 list(wp_tokens[:max_len]) + \
+								 [self.eos_token] + \
+								 [self.pad_token] * max(0, max_len - len(wp_tokens))
 
-            padded.append(padded_example)
-            lengths.append(len(padded_example) - max(0, max_len - len(wp_tokens)))
+			padded.append(padded_example)
+			lengths.append(len(padded_example) - max(0, max_len - len(wp_tokens)))
 
-            numerical.append(self._tokenizer.convert_tokens_to_ids(padded_example))
-            decoder_numerical.append([decoder_vocab.encode(word) for word in padded_example])
+			numerical.append(self._tokenizer.convert_tokens_to_ids(padded_example))
+			decoder_numerical.append([decoder_vocab.encode(word) for word in padded_example])
 
-        length = torch.tensor(lengths, dtype=torch.int32, device=device)
-        numerical = torch.tensor(numerical, dtype=torch.int64, device=device)
-        decoder_numerical = torch.tensor(decoder_numerical, dtype=torch.int64, device=device)
+		length = torch.tensor(lengths, dtype=torch.int32, device=device)
+		numerical = torch.tensor(numerical, dtype=torch.int64, device=device)
+		decoder_numerical = torch.tensor(decoder_numerical, dtype=torch.int64, device=device)
 
-        return SequentialField(length=length, value=numerical, limited=decoder_numerical)
+		return SequentialField(length=length, value=numerical, limited=decoder_numerical)
 
-    def decode(self, tensor):
-        return self._tokenizer.convert_ids_to_tokens(tensor)
+	def decode(self, tensor):
+		return self._tokenizer.convert_ids_to_tokens(tensor)
 
-    def reverse(self, batch, detokenize, field_name=None):
-        raise NotImplementedError()
+	def reverse(self, batch, detokenize, field_name=None):
+		raise NotImplementedError()
 
 class XLMRobertaNumericalizer(TransformerNumericalizer):
 
-    def __init__(self, pretrained_tokenizer, config, max_generative_vocab, cache=None, fix_length=None):
-        super().__init__(pretrained_tokenizer, config, max_generative_vocab, cache, fix_length)
+	def __init__(self, pretrained_tokenizer, config, max_generative_vocab, cache=None, fix_length=None):
+		super().__init__(pretrained_tokenizer, config, max_generative_vocab, cache, fix_length)
 
-    def load(self, save_dir):
-        self._tokenizer = MaskedXLMRobertaTokenizer.from_pretrained(save_dir, config=self.config, cache_dir=self._cache)
-        # HACK we cannot save the tokenizer without this
-        del self._tokenizer.init_kwargs['config']
+	def load(self, save_dir):
+		self._tokenizer = MaskedXLMRobertaTokenizer.from_pretrained(save_dir, config=self.config, cache_dir=self._cache)
+		# HACK we cannot save the tokenizer without this
+		del self._tokenizer.init_kwargs['config']
 
-        with open(os.path.join(save_dir, 'decoder-vocab.txt'), 'r') as fp:
-            self._decoder_words = [line.rstrip('\n') for line in fp]
+		with open(os.path.join(save_dir, 'decoder-vocab.txt'), 'r') as fp:
+			self._decoder_words = [line.rstrip('\n') for line in fp]
 
-        self._init()
+		self._init()
 
-    def build_vocab(self, vocab_fields, vocab_sets):
-        self._tokenizer = MaskedXLMRobertaTokenizer.from_pretrained(self._pretrained_name, config=self.config,
-                                                                    cache_dir=self._cache)
-        # HACK we cannot save the tokenizer without this
-        del self._tokenizer.init_kwargs['config']
+	def build_vocab(self, vocab_fields, vocab_sets):
+		self._tokenizer = MaskedXLMRobertaTokenizer.from_pretrained(self._pretrained_name, config=self.config,
+																	cache_dir=self._cache)
+		# HACK we cannot save the tokenizer without this
+		del self._tokenizer.init_kwargs['config']
 
-        # ensure that init, eos, unk and pad are set
-        # this method has no effect if the tokens are already set according to the tokenizer class
-        self._tokenizer.add_special_tokens({
-            'bos_token': "<s>",
-            'eos_token': "</s>",
-            'sep_token': "</s>",
-            'unk_token': "<unk>",
-            'pad_token': "<pad>",
-            'mask_token': "<mask>",
-            'cls_token': "<s>",
-        })
+		# ensure that init, eos, unk and pad are set
+		# this method has no effect if the tokens are already set according to the tokenizer class
+		self._tokenizer.add_special_tokens({
+			'bos_token': "<s>",
+			'eos_token': "</s>",
+			'sep_token': "</s>",
+			'unk_token': "<unk>",
+			'pad_token': "<pad>",
+			'mask_token': "<mask>",
+			'cls_token': "<s>",
+		})
 
-        # do a pass over all the data in the dataset
-        # in this pass, we
-        # 1) tokenize everything, to ensure we account for all added tokens
-        # 2) we construct a counter of wordpieces in the answers, for the decoder vocabulary
-        decoder_words = collections.Counter()
-        for dataset in vocab_sets:
-            for example in dataset:
-                decoder_words.update(self._tokenizer.tokenize(example.context, example.context_word_mask))
-                decoder_words.update(self._tokenizer.tokenize(example.question, example.question_word_mask))
-                decoder_words.update(self._tokenizer.tokenize(example.answer, example.answer_word_mask))
+		# do a pass over all the data in the dataset
+		# in this pass, we
+		# 1) tokenize everything, to ensure we account for all added tokens
+		# 2) we construct a counter of wordpieces in the answers, for the decoder vocabulary
+		decoder_words = collections.Counter()
+		for dataset in vocab_sets:
+			for example in dataset:
+				decoder_words.update(self._tokenizer.tokenize(example.context, example.context_word_mask))
+				decoder_words.update(self._tokenizer.tokenize(example.question, example.question_word_mask))
+				decoder_words.update(self._tokenizer.tokenize(example.answer, example.answer_word_mask))
 
-        self._decoder_words = ["<s>", "</s>", "<pad>", "<unk>", "<mask>"] + \
-                              [word for word, _freq in decoder_words.most_common(self.max_generative_vocab)]
+		self._decoder_words = ["<s>", "</s>", "<pad>", "<unk>", "<mask>"] + \
+							  [word for word, _freq in decoder_words.most_common(self.max_generative_vocab)]
 
-        self._init()
+		self._init()
 
-    def encode_pair(self, minibatch, decoder_vocab, device=None):
-        # apply word-piece tokenization to everything first
-        wp_tokenized_a = []
-        wp_tokenized_b = []
-        for (tokens_a, mask_a), (tokens_b, mask_b) in minibatch:
-            wp_tokenized_a.append(self._tokenizer.tokenize(tokens_a, mask_a))
-            wp_tokenized_b.append(self._tokenizer.tokenize(tokens_b, mask_b))
+	def encode_pair(self, minibatch, decoder_vocab, device=None):
+		# apply word-piece tokenization to everything first
+		wp_tokenized_a = []
+		wp_tokenized_b = []
+		for (tokens_a, mask_a), (tokens_b, mask_b) in minibatch:
+			wp_tokenized_a.append(self._tokenizer.tokenize(tokens_a, mask_a))
+			wp_tokenized_b.append(self._tokenizer.tokenize(tokens_b, mask_b))
 
-        if self.fix_length is None:
-            max_len = max(len(wp_a) + len(wp_b) for wp_a, wp_b in zip(wp_tokenized_a, wp_tokenized_b))
-        else:
-            max_len = self.fix_length
+		if self.fix_length is None:
+			max_len = max(len(wp_a) + len(wp_b) for wp_a, wp_b in zip(wp_tokenized_a, wp_tokenized_b))
+		else:
+			max_len = self.fix_length
 
-        padded = []
-        lengths = []
-        numerical = []
-        decoder_numerical = []
-        for (wp_tokens_a, _), (wp_tokens_b, _) in minibatch:
-            if self.pad_first:
-                padded_example = [self.pad_token] * max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b)) + \
-                                 [self.init_token] + \
-                                 list(wp_tokens_a[:max_len]) + \
-                                 [self.sep_token] + \
-                                 [self.sep_token] + \
-                                 list(wp_tokens_b[:max_len]) + \
-                                 [self.eos_token]
+		padded = []
+		lengths = []
+		numerical = []
+		decoder_numerical = []
+		for (wp_tokens_a, _), (wp_tokens_b, _) in minibatch:
+			if self.pad_first:
+				padded_example = [self.pad_token] * max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b)) + \
+								 [self.init_token] + \
+								 list(wp_tokens_a[:max_len]) + \
+								 [self.sep_token] + \
+								 [self.sep_token] + \
+								 list(wp_tokens_b[:max_len]) + \
+								 [self.eos_token]
 
-            else:
-                padded_example = [self.init_token] + \
-                                 list(wp_tokens_a[:max_len]) + \
-                                 [self.sep_token] + \
-                                 [self.sep_token] + \
-                                 list(wp_tokens_b[:max_len]) + \
-                                 [self.eos_token] + \
-                                 [self.pad_token] * max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b))
+			else:
+				padded_example = [self.init_token] + \
+								 list(wp_tokens_a[:max_len]) + \
+								 [self.sep_token] + \
+								 [self.sep_token] + \
+								 list(wp_tokens_b[:max_len]) + \
+								 [self.eos_token] + \
+								 [self.pad_token] * max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b))
 
-            padded.append(padded_example)
-            lengths.append(len(padded_example) - max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b)))
+			padded.append(padded_example)
+			lengths.append(len(padded_example) - max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b)))
 
-            numerical.append(self._tokenizer.convert_tokens_to_ids(padded_example))
-            decoder_numerical.append([decoder_vocab.encode(word) for word in padded_example])
+			numerical.append(self._tokenizer.convert_tokens_to_ids(padded_example))
+			decoder_numerical.append([decoder_vocab.encode(word) for word in padded_example])
 
-        length = torch.tensor(lengths, dtype=torch.int32, device=device)
-        numerical = torch.tensor(numerical, dtype=torch.int64, device=device)
-        decoder_numerical = torch.tensor(decoder_numerical, dtype=torch.int64, device=device)
+		length = torch.tensor(lengths, dtype=torch.int32, device=device)
+		numerical = torch.tensor(numerical, dtype=torch.int64, device=device)
+		decoder_numerical = torch.tensor(decoder_numerical, dtype=torch.int64, device=device)
 
-        return SequentialField(length=length, value=numerical, limited=decoder_numerical)
+		return SequentialField(length=length, value=numerical, limited=decoder_numerical)
 
-    def reverse(self, batch, detokenize, field_name=None):
-        with torch.cuda.device_of(batch):
-            batch = batch.tolist()
+	def reverse(self, batch, detokenize, field_name=None):
+		with torch.cuda.device_of(batch):
+			batch = batch.tolist()
 
-        def is_entity(token):
-            return token[0].isupper()
+		def is_entity(token):
+			return token[0].isupper()
 
-        def is_device(token):
-            return token[0] == '@'
+		def is_device(token):
+			return token[0] == '@'
 
-        def reverse_one(tensor, field_name):
-            tokens = []
+		def reverse_one(tensor, field_name):
+			tokens = []
 
-            in_string = False
-            # trim up to EOS, remove other special stuff, and undo wordpiece tokenization
-            for token in self.decode(tensor):
-                if token == self.eos_token:
-                    break
-                if token in (self.init_token, self.pad_token):
-                    continue
-                if token.startswith(SPIECE_UNDERLINE):
-                    tokens.append(token[1:])
-                elif len(tokens) == 0:
-                    tokens.append(token)
-                else:
-                    if field_name == 'answer':
-                        if token == '"':
-                            in_string = not in_string
-                            tokens.append(token)
-                            continue
-                        if in_string:
-                            tokens[-1] += token
-                        else:
-                            tokens.append(token)
+			in_string = False
+			# trim up to EOS, remove other special stuff, and undo wordpiece tokenization
+			for token in self.decode(tensor):
+				if token == self.eos_token:
+					break
+				if token in (self.init_token, self.pad_token):
+					continue
+				if token.startswith(SPIECE_UNDERLINE):
+					tokens.append(token[1:])
+				elif len(tokens) == 0:
+					tokens.append(token)
+				else:
+					if field_name == 'answer':
+						if token == '"':
+							in_string = not in_string
+							tokens.append(token)
+							continue
+						if in_string:
+							tokens[-1] += token
+						else:
+							tokens.append(token)
 
-                    else:
-                        if is_entity(token) or is_device(token):
-                            tokens.append(token)
-                        else:
-                            tokens[-1] += token
+					else:
+						if is_entity(token) or is_device(token):
+							tokens.append(token)
+						else:
+							tokens[-1] += token
 
-            return detokenize(tokens, field_name=field_name)
+			return detokenize(tokens, field_name=field_name)
 
-        return [reverse_one(tensor, field_name) for tensor in batch]
+		return [reverse_one(tensor, field_name) for tensor in batch]
 
 class BertNumericalizer(TransformerNumericalizer):
-    """
-    Numericalizer that uses BertTokenizer from huggingface's transformers library.
-    """
+	"""
+	Numericalizer that uses BertTokenizer from huggingface's transformers library.
+	"""
 
-    def __init__(self, pretrained_tokenizer, config, max_generative_vocab, cache=None, fix_length=None):
-        super().__init__(pretrained_tokenizer, config, max_generative_vocab, cache, fix_length)
+	def __init__(self, pretrained_tokenizer, config, max_generative_vocab, cache=None, fix_length=None):
+		super().__init__(pretrained_tokenizer, config, max_generative_vocab, cache, fix_length)
 
-    def load(self, save_dir):
-        self._tokenizer = MaskedBertTokenizer.from_pretrained(save_dir, config=self.config, cache_dir=self._cache)
-        # HACK we cannot save the tokenizer without this
-        del self._tokenizer.init_kwargs['config']
+	def load(self, save_dir):
+		self._tokenizer = MaskedBertTokenizer.from_pretrained(save_dir, config=self.config, cache_dir=self._cache)
+		# HACK we cannot save the tokenizer without this
+		del self._tokenizer.init_kwargs['config']
 
-        with open(os.path.join(save_dir, 'decoder-vocab.txt'), 'r') as fp:
-            self._decoder_words = [line.rstrip('\n') for line in fp]
+		with open(os.path.join(save_dir, 'decoder-vocab.txt'), 'r') as fp:
+			self._decoder_words = [line.rstrip('\n') for line in fp]
 
-        self._init()
+		self._init()
 
-    def build_vocab(self, vocab_fields, vocab_sets):
-        self._tokenizer = MaskedBertTokenizer.from_pretrained(self._pretrained_name, config=self.config,
-                                                              cache_dir=self._cache)
-        # HACK we cannot save the tokenizer without this
-        del self._tokenizer.init_kwargs['config']
+	def build_vocab(self, vocab_fields, vocab_sets):
+		self._tokenizer = MaskedBertTokenizer.from_pretrained(self._pretrained_name, config=self.config,
+															  cache_dir=self._cache)
+		# HACK we cannot save the tokenizer without this
+		del self._tokenizer.init_kwargs['config']
 
-        # ensure that init, eos, unk and pad are set
-        # this method has no effect if the tokens are already set according to the tokenizer class
-        self._tokenizer.add_special_tokens({
-            'bos_token': '[CLS]',
-            'eos_token': '[SEP]',
-            'sep_token': '[SEP]',
-            'unk_token': '[UNK]',
-            'pad_token': '[PAD]',
-            'mask_token': '[MASK]'
-        })
+		# ensure that init, eos, unk and pad are set
+		# this method has no effect if the tokens are already set according to the tokenizer class
+		self._tokenizer.add_special_tokens({
+			'bos_token': '[CLS]',
+			'eos_token': '[SEP]',
+			'sep_token': '[SEP]',
+			'unk_token': '[UNK]',
+			'pad_token': '[PAD]',
+			'mask_token': '[MASK]'
+		})
 
-        # do a pass over all the data in the dataset
-        # in this pass, we
-        # 1) tokenize everything, to ensure we account for all added tokens
-        # 2) we construct a counter of wordpieces in the answers, for the decoder vocabulary
-        decoder_words = collections.Counter()
-        for dataset in vocab_sets:
-            for example in dataset:
-                decoder_words.update(self._tokenizer.tokenize(example.context, example.context_word_mask))
-                decoder_words.update(self._tokenizer.tokenize(example.question, example.question_word_mask))
-                decoder_words.update(self._tokenizer.tokenize(example.answer, example.answer_word_mask))
+		# do a pass over all the data in the dataset
+		# in this pass, we
+		# 1) tokenize everything, to ensure we account for all added tokens
+		# 2) we construct a counter of wordpieces in the answers, for the decoder vocabulary
+		decoder_words = collections.Counter()
+		for dataset in vocab_sets:
+			for example in dataset:
+				decoder_words.update(self._tokenizer.tokenize(example.context, example.context_word_mask))
+				decoder_words.update(self._tokenizer.tokenize(example.question, example.question_word_mask))
+				decoder_words.update(self._tokenizer.tokenize(example.answer, example.answer_word_mask))
 
-        self._decoder_words = ['[PAD]', '[CLS]', '[SEP]', '[UNK]', '[MASK]'] + \
-                              [word for word, _freq in decoder_words.most_common(self.max_generative_vocab)]
+		self._decoder_words = ['[PAD]', '[CLS]', '[SEP]', '[UNK]', '[MASK]'] + \
+							  [word for word, _freq in decoder_words.most_common(self.max_generative_vocab)]
 
-        self._init()
+		self._init()
 
-    def encode_pair(self, minibatch, decoder_vocab, device=None):
-        # apply word-piece tokenization to everything first
-        wp_tokenized_a = []
-        wp_tokenized_b = []
-        for (tokens_a, mask_a), (tokens_b, mask_b) in minibatch:
-            wp_tokenized_a.append(self._tokenizer.tokenize(tokens_a, mask_a))
-            wp_tokenized_b.append(self._tokenizer.tokenize(tokens_b, mask_b))
+	def encode_pair(self, minibatch, decoder_vocab, device=None):
+		# apply word-piece tokenization to everything first
+		wp_tokenized_a = []
+		wp_tokenized_b = []
+		for (tokens_a, mask_a), (tokens_b, mask_b) in minibatch:
+			wp_tokenized_a.append(self._tokenizer.tokenize(tokens_a, mask_a))
+			wp_tokenized_b.append(self._tokenizer.tokenize(tokens_b, mask_b))
 
-        if self.fix_length is None:
-            max_len = max(len(wp_a) + len(wp_b) for wp_a, wp_b in zip(wp_tokenized_a, wp_tokenized_b))
-        else:
-            max_len = self.fix_length
+		if self.fix_length is None:
+			max_len = max(len(wp_a) + len(wp_b) for wp_a, wp_b in zip(wp_tokenized_a, wp_tokenized_b))
+		else:
+			max_len = self.fix_length
 
-        padded = []
-        lengths = []
-        numerical = []
-        decoder_numerical = []
-        for (wp_tokens_a, _), (wp_tokens_b, _) in minibatch:
-            if self.pad_first:
-                padded_example = [self.pad_token] * max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b)) + \
-                                 [self.init_token] + \
-                                 list(wp_tokens_a[:max_len]) + \
-                                 [self.sep_token] + \
-                                 list(wp_tokens_b[:max_len]) + \
-                                 [self.eos_token]
+		padded = []
+		lengths = []
+		numerical = []
+		decoder_numerical = []
+		for (wp_tokens_a, _), (wp_tokens_b, _) in minibatch:
+			if self.pad_first:
+				padded_example = [self.pad_token] * max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b)) + \
+								 [self.init_token] + \
+								 list(wp_tokens_a[:max_len]) + \
+								 [self.sep_token] + \
+								 list(wp_tokens_b[:max_len]) + \
+								 [self.eos_token]
 
-            else:
-                padded_example = [self.init_token] + \
-                                 list(wp_tokens_a[:max_len]) + \
-                                 [self.sep_token] + \
-                                 list(wp_tokens_b[:max_len]) + \
-                                 [self.eos_token] + \
-                                 [self.pad_token] * max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b))
+			else:
+				padded_example = [self.init_token] + \
+								 list(wp_tokens_a[:max_len]) + \
+								 [self.sep_token] + \
+								 list(wp_tokens_b[:max_len]) + \
+								 [self.eos_token] + \
+								 [self.pad_token] * max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b))
 
-            padded.append(padded_example)
-            lengths.append(len(padded_example) - max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b)))
+			padded.append(padded_example)
+			lengths.append(len(padded_example) - max(0, 2 * max_len - len(wp_tokens_a) - len(wp_tokens_b)))
 
-            numerical.append(self._tokenizer.convert_tokens_to_ids(padded_example))
-            decoder_numerical.append([decoder_vocab.encode(word) for word in padded_example])
+			numerical.append(self._tokenizer.convert_tokens_to_ids(padded_example))
+			decoder_numerical.append([decoder_vocab.encode(word) for word in padded_example])
 
-        length = torch.tensor(lengths, dtype=torch.int32, device=device)
-        numerical = torch.tensor(numerical, dtype=torch.int64, device=device)
-        decoder_numerical = torch.tensor(decoder_numerical, dtype=torch.int64, device=device)
+		length = torch.tensor(lengths, dtype=torch.int32, device=device)
+		numerical = torch.tensor(numerical, dtype=torch.int64, device=device)
+		decoder_numerical = torch.tensor(decoder_numerical, dtype=torch.int64, device=device)
 
-        return SequentialField(length=length, value=numerical, limited=decoder_numerical)
+		return SequentialField(length=length, value=numerical, limited=decoder_numerical)
 
-    def reverse(self, batch, detokenize, field_name=None):
-        with torch.cuda.device_of(batch):
-            batch = batch.tolist()
+	def reverse(self, batch, detokenize, field_name=None):
+		with torch.cuda.device_of(batch):
+			batch = batch.tolist()
 
-        def reverse_one(tensor):
-            tokens = []
+		def reverse_one(tensor):
+			tokens = []
 
-            # trim up to EOS, remove other special stuff, and undo wordpiece tokenization
-            for token in self.decode(tensor):
-                if token == self.eos_token:
-                    break
-                if token in (self.init_token, self.pad_token):
-                    continue
-                if token.startswith('##'):
-                    if len(tokens) == 0:
-                        tokens.append(token[2:])
-                    else:
-                        tokens[-1] += token[2:]
-                else:
-                    tokens.append(token)
+			# trim up to EOS, remove other special stuff, and undo wordpiece tokenization
+			for token in self.decode(tensor):
+				if token == self.eos_token:
+					break
+				if token in (self.init_token, self.pad_token):
+					continue
+				if token.startswith('##'):
+					if len(tokens) == 0:
+						tokens.append(token[2:])
+					else:
+						tokens[-1] += token[2:]
+				else:
+					tokens.append(token)
 
-            return detokenize(tokens, field_name=field_name)
+			return detokenize(tokens, field_name=field_name)
 
-        return [reverse_one(tensor) for tensor in batch]
+		return [reverse_one(tensor) for tensor in batch]
 
 
 # TODO
 class BartNumericalizer(TransformerNumericalizer):
 
-    def __init__(self, pretrained_tokenizer=None, config=None, max_generative_vocab=None, cache=None, fix_length=None):
-        super().__init__(pretrained_tokenizer, config, max_generative_vocab, cache, fix_length)
-        self._tokenizer = BartTokenizer.from_pretrained(pretrained_tokenizer, config=config)
-        self.decoder_vocab = DecoderVocabulary(self._tokenizer.decoder.values(), None, pad_token=self._tokenizer.pad_token, eos_token=self._tokenizer.eos_token)
+	def __init__(self, pretrained_tokenizer=None, config=None, max_generative_vocab=None, cache=None, fix_length=None):
+		super().__init__(pretrained_tokenizer, config, max_generative_vocab, cache, fix_length)
+		self._tokenizer = BartTokenizer.from_pretrained(pretrained_tokenizer, config=config)
+		self.decoder_vocab = DecoderVocabulary(self._tokenizer.decoder.values(), None, pad_token=self._tokenizer.pad_token, eos_token=self._tokenizer.eos_token)
 
 
-    def load(self, save_dir):
-        self._tokenizer = BartTokenizer.from_pretrained(save_dir)
-        self.decoder_vocab = DecoderVocabulary(self._tokenizer.decoder.values(), None, pad_token=self._tokenizer.pad_token, eos_token=self._tokenizer.eos_token)
+	def load(self, save_dir):
+		self._tokenizer = BartTokenizer.from_pretrained(save_dir)
+		self.decoder_vocab = DecoderVocabulary(self._tokenizer.decoder.values(), None, pad_token=self._tokenizer.pad_token, eos_token=self._tokenizer.eos_token)
 
-    def save(self, save_dir):
-        self._tokenizer.save_pretrained(save_dir)
+	def save(self, save_dir):
+		self._tokenizer.save_pretrained(save_dir)
 
-    def build_vocab(self, vocab_fields, vocab_sets):
-        raise NotImplementedError
+	def build_vocab(self, vocab_fields, vocab_sets):
+		raise NotImplementedError
 
-    def encode_single(self, minibatch, decoder_vocab, device=None, max_length=-1):
-        """
-        minibatch: this method ignores the `mask` component of minibatch
-        """
-        assert isinstance(minibatch, list)
-        batch_tokens = []
-        for tokens, mask in minibatch:
-            if len(tokens) == 0:
-                batch_tokens.append(' ')
-            else:
-                batch_tokens.append(' '.join(tokens))
-        
-        encoded_batch = self._tokenizer.batch_encode_plus(batch_tokens, add_special_tokens=True, padding='longest', return_attention_mask=True)
-        length = torch.sum(torch.tensor(encoded_batch['attention_mask'], dtype=torch.int32, device=device), dim=1)
-        numerical = torch.tensor(encoded_batch['input_ids'], dtype=torch.int64, device=device)
+	def encode_single(self, minibatch, decoder_vocab, device=None, max_length=-1):
+		"""
+		minibatch: this method ignores the `mask` component of minibatch
+		"""
+		assert isinstance(minibatch, list)
+		batch_tokens = []
+		for tokens, mask in minibatch:
+			if len(tokens) == 0:
+				batch_tokens.append(' ')
+			else:
+				batch_tokens.append(' '.join(tokens))
+		
+		encoded_batch = self._tokenizer.batch_encode_plus(batch_tokens, add_special_tokens=True, padding='longest', return_attention_mask=True)
+		length = torch.sum(torch.tensor(encoded_batch['attention_mask'], dtype=torch.int32, device=device), dim=1)
+		numerical = torch.tensor(encoded_batch['input_ids'], dtype=torch.int64, device=device)
 
-        decoder_numerical = numerical
+		decoder_numerical = numerical
 
-        return SequentialField(length=length, value=numerical, limited=decoder_numerical)
+		return SequentialField(length=length, value=numerical, limited=decoder_numerical)
 
-    def encode_pair(self, minibatch, decoder_vocab, device=None):
-        # TODO
-        raise NotImplementedError
+	def encode_pair(self, minibatch, decoder_vocab, device=None):
+		# TODO
+		raise NotImplementedError
 
-    def reverse(self, batch, detokenize, field_name=None):
-        _reversed = self._tokenizer.batch_decode(batch, skip_special_tokens=True)
-        return _reversed
+	def reverse(self, batch, detokenize, field_name=None):
+		_reversed = self._tokenizer.batch_decode(batch, skip_special_tokens=True)
+		return _reversed
 
-    def decode(self, tensor):
-        return self.convert_ids_to_tokens(tensor)
-        
+	def decode(self, tensor):
+		return self._tokenizer.convert_ids_to_tokens(tensor)
+
+
+class MT5Numericalizer(TransformerNumericalizer):
+	
+	def __init__(self, pretrained_tokenizer=None, config=None, max_generative_vocab=None, cache=None, fix_length=None):
+		super().__init__(pretrained_tokenizer, config, max_generative_vocab, cache, fix_length)
+		self._tokenizer = T5Tokenizer.from_pretrained(pretrained_tokenizer, config=config)
+
+		vocabs = [self._tokenizer.sp_model.id_to_piece(i) for i in range(self._tokenizer.sp_model.get_piece_size())]
+		self.decoder_vocab = DecoderVocabulary(vocabs, None, pad_token=self._tokenizer.pad_token, eos_token=self._tokenizer.eos_token)
+		
+	def load(self, save_dir):
+		self._tokenizer = T5Tokenizer.from_pretrained(save_dir)
+		self.decoder_vocab = DecoderVocabulary(self._tokenizer.decoder.values(), None,
+											   pad_token=self._tokenizer.pad_token, eos_token=self._tokenizer.eos_token)
+	
+	def save(self, save_dir):
+		self._tokenizer.save_pretrained(save_dir)
+	
+	def build_vocab(self, vocab_fields, vocab_sets):
+		raise NotImplementedError
+	
+	def encode_single(self, minibatch, decoder_vocab, device=None, max_length=-1):
+		"""
+		minibatch: this method ignores the `mask` component of minibatch
+		"""
+		assert isinstance(minibatch, list)
+		batch_tokens = []
+		for tokens, mask in minibatch:
+			if len(tokens) == 0:
+				batch_tokens.append(' ')
+			else:
+				batch_tokens.append(' '.join(tokens))
+		
+		encoded_batch = self._tokenizer.batch_encode_plus(batch_tokens, add_special_tokens=True, padding='longest',
+														  return_attention_mask=True)
+		length = torch.sum(torch.tensor(encoded_batch['attention_mask'], dtype=torch.int32, device=device), dim=1)
+		numerical = torch.tensor(encoded_batch['input_ids'], dtype=torch.int64, device=device)
+		
+		decoder_numerical = numerical
+		
+		return SequentialField(length=length, value=numerical, limited=decoder_numerical)
+	
+	def encode_pair(self, minibatch, decoder_vocab, device=None):
+		# TODO
+		raise NotImplementedError
+	
+	def reverse(self, batch, detokenize, field_name=None):
+		_reversed = self._tokenizer.batch_decode(batch, skip_special_tokens=True)
+		return _reversed
+	
+	def decode(self, tensor):
+		return self._tokenizer.convert_ids_to_tokens(tensor)
