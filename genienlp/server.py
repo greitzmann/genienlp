@@ -57,10 +57,10 @@ class Server:
 
         self._cached_tasks = dict()
 
-    def numericalize_example(self, ex):
-        self.model.add_new_vocab_from_data([[[ex]]])
+    def numericalize_examples(self, ex):
+        self.model.add_new_vocab_from_data([[ex]])
 
-        all_features = NumericalizedExamples.from_examples([ex], self.numericalizer, device=self.device,
+        all_features = NumericalizedExamples.from_examples(ex, self.numericalizer, device=self.device,
                                    append_question_to_context_too=self.args.append_question_to_context_too,
                                    override_question=self.args.override_question,
                                    override_context=self.args.override_context)
@@ -85,8 +85,8 @@ class Server:
             task = list(get_tasks([task_name], self.args).values())[0]
             self._cached_tasks[task_name] = task
 
-        batch = []
         if 'instances' in request:
+            examples = []
             # request['instances'] is an array of {context, question, answer, example_id}
             for instance in request['instances']:
                 example_id, context, question, answer = instance.get('example_id', ''), instance['context'], instance['question'], instance.get('answer', '')
@@ -96,8 +96,25 @@ class Server:
                     question = task.default_question
 
                 ex = Example.from_raw(str(example_id), context, question, answer, tokenize=task.tokenize, lower=self.args.lower)
-                batch.append(self.numericalize_example(ex))
-            predictions = generate_with_model(self.model, batch, self.numericalizer, task, self.args, prediction_file_name=None, output_predictions_only=True)
+                examples.append(ex)
+
+
+            # all_features = NumericalizedExamples.from_examples(examples, self.numericalizer, device=device,
+            #                     paired=paired and train, max_pairs=max_pairs, groups=dataset.groups,
+            #                     append_question_to_context_too=append_question_to_context_too,
+            #                     override_question=override_question, override_context=override_context)
+
+            # all_f = []
+            # for i in range(len(all_features.example_id), desc='Converting dataset to features'):
+            #     all_f.append(NumericalizedExamples(example_id=[all_features.example_id[i]],
+            #                         context=SequentialField(value=all_features.context.value[i], length=all_features.context.length[i], limited=all_features.context.limited[i]),
+            #                         question=SequentialField(value=all_features.question.value[i], length=all_features.question.length[i], limited=all_features.question.limited[i]),
+            #                         answer=SequentialField(value=all_features.answer.value[i], length=all_features.answer.length[i], limited=all_features.answer.limited[i]),
+            #                         decoder_vocab=all_features.decoder_vocab, device=device, padding_function=numericalizer.pad))
+
+            batch = self.numericalize_examples(examples)
+            # it is a single batch, so wrap it in []
+            predictions = generate_with_model(self.model, [batch], self.numericalizer, task, self.args, prediction_file_name=None, output_predictions_only=True)
 
             response = json.dumps({ 'id': request['id'], 'instances': [{ 'answer': p[0] } for p in predictions] })
             return response + '\n'
@@ -112,7 +129,7 @@ class Server:
 
             ex = Example.from_raw(str(request['id']), context, question, answer, tokenize=task.tokenize, lower=self.args.lower)
 
-            batch = self.numericalize_example(ex)
+            batch = self.numericalize_examples([ex])
             predictions = generate_with_model(self.model, [batch], self.numericalizer, task, self.args, prediction_file_name=None, output_predictions_only=True)
 
             response = json.dumps(dict(id=request['id'], answer=predictions[0][0]))
