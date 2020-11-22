@@ -89,7 +89,7 @@ class Server:
         if 'instances' in request:
             # request['instances'] is an array of {context, question, answer, example_id}
             for instance in request['instances']:
-                example_id, context, question, answer = instance['example_id'], instance['context'], instance['question'], ''
+                example_id, context, question, answer = instance.get('example_id', ''), instance['context'], instance['question'], instance.get('answer', '')
                 if not context:
                     context = task.default_context
                 if not question:
@@ -99,7 +99,7 @@ class Server:
                 batch.append(self.numericalize_example(ex))
             predictions = generate_with_model(self.model, batch, self.numericalizer, task, self.args, prediction_file_name=None, output_predictions_only=True)
 
-            response = json.dumps(dict(id=request['id'], instances=dict(answer=[p[0] for p in predictions])))
+            response = json.dumps({ 'id': request['id'], 'instances': [{ 'answer': p[0] } for p in predictions] })
             return response + '\n'
         else:
             context = request['context']
