@@ -98,20 +98,6 @@ class Server:
                 ex = Example.from_raw(str(example_id), context, question, answer, tokenize=task.tokenize, lower=self.args.lower)
                 examples.append(ex)
 
-
-            # all_features = NumericalizedExamples.from_examples(examples, self.numericalizer, device=device,
-            #                     paired=paired and train, max_pairs=max_pairs, groups=dataset.groups,
-            #                     append_question_to_context_too=append_question_to_context_too,
-            #                     override_question=override_question, override_context=override_context)
-
-            # all_f = []
-            # for i in range(len(all_features.example_id), desc='Converting dataset to features'):
-            #     all_f.append(NumericalizedExamples(example_id=[all_features.example_id[i]],
-            #                         context=SequentialField(value=all_features.context.value[i], length=all_features.context.length[i], limited=all_features.context.limited[i]),
-            #                         question=SequentialField(value=all_features.question.value[i], length=all_features.question.length[i], limited=all_features.question.limited[i]),
-            #                         answer=SequentialField(value=all_features.answer.value[i], length=all_features.answer.length[i], limited=all_features.answer.limited[i]),
-            #                         decoder_vocab=all_features.decoder_vocab, device=device, padding_function=numericalizer.pad))
-
             batch = self.numericalize_examples(examples)
             # it is a single batch, so wrap it in []
             predictions = generate_with_model(self.model, [batch], self.numericalizer, task, self.args, prediction_file_name=None, output_predictions_only=True)
